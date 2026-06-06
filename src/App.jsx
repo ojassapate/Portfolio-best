@@ -17,14 +17,12 @@ import { AnimatedBackground } from './components/AnimatedBackground.jsx';
 
 gsap.registerPlugin(ScrollTrigger);
 
-// ─── Change this to set your edit password ──────────────────────
-const EDIT_PASSWORD = 'ojas2024';
-// ────────────────────────────────────────────────────────────────
-
-function PasswordModal({ onSuccess, onCancel }) {
+function PasswordModal({ onVerify, onSuccess, onCancel }) {
+  // Password is validated server-side when saving
   const [val, setVal] = useState('');
   const [error, setError] = useState(false);
   const [shake, setShake] = useState(false);
+  const [loading, setLoading] = useState(false);
   const overlayRef = useRef(null);
   const boxRef = useRef(null);
   const inputRef = useRef(null);
@@ -36,16 +34,29 @@ function PasswordModal({ onSuccess, onCancel }) {
   }, []);
 
   const dismiss = () => {
+    if (loading) return;
     gsap.to(boxRef.current, { y: 24, scale: 0.95, opacity: 0, duration: 0.25 });
     gsap.to(overlayRef.current, { opacity: 0, duration: 0.3, delay: 0.1, onComplete: onCancel });
   };
 
-  const submit = () => {
-    if (val === EDIT_PASSWORD) {
-      sessionStorage.setItem('portfolio_edit_auth', '1');
-      gsap.to(boxRef.current, { scale: 1.04, duration: 0.1, yoyo: true, repeat: 1, onComplete: () => {
-        gsap.to(overlayRef.current, { opacity: 0, duration: 0.3, onComplete: onSuccess });
-      }});
+  const submit = async () => {
+    if (loading) return;
+    if (val.trim().length > 0) {
+      setLoading(true);
+      const isValid = await onVerify(val);
+      setLoading(false);
+      if (isValid) {
+        sessionStorage.setItem('portfolio_edit_auth', '1');
+        sessionStorage.setItem('portfolio_edit_pw', val);
+        gsap.to(boxRef.current, { scale: 1.04, duration: 0.1, yoyo: true, repeat: 1, onComplete: () => {
+          gsap.to(overlayRef.current, { opacity: 0, duration: 0.3, onComplete: () => onSuccess(val) });
+        }});
+      } else {
+        setError(true);
+        setShake(true);
+        setVal('');
+        setTimeout(() => setShake(false), 600);
+      }
     } else {
       setError(true);
       setShake(true);
@@ -98,6 +109,7 @@ function PasswordModal({ onSuccess, onCancel }) {
           placeholder="Password"
           value={val}
           onChange={e => { setVal(e.target.value); setError(false); }}
+          disabled={loading}
           style={{
             width: '100%', padding: '12px 14px',
             background: error ? 'rgba(192,57,43,0.08)' : 'var(--bg3)',
@@ -112,18 +124,18 @@ function PasswordModal({ onSuccess, onCancel }) {
           </div>
         )}
         <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-          <button onClick={dismiss} style={{
+          <button onClick={dismiss} disabled={loading} style={{
             flex: 1, padding: '11px', background: 'transparent', border: '1px solid var(--border)',
-            color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'Roboto Flex, sans-serif',
+            color: 'var(--text-muted)', cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'Roboto Flex, sans-serif',
             fontSize: '13px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-            transition: 'border-color 0.2s',
+            transition: 'border-color 0.2s', opacity: loading ? 0.6 : 1,
           }}>Cancel</button>
-          <button onClick={submit} style={{
+          <button onClick={submit} disabled={loading} style={{
             flex: 1, padding: '11px', background: 'var(--orange)', border: 'none',
-            color: '#141414', cursor: 'pointer', fontFamily: 'Roboto Flex, sans-serif',
+            color: '#141414', cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'Roboto Flex, sans-serif',
             fontSize: '13px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-            transition: 'background 0.2s',
-          }}>Unlock</button>
+            transition: 'background 0.2s', opacity: loading ? 0.8 : 1,
+          }}>{loading ? 'Verifying...' : 'Unlock'}</button>
         </div>
       </div>
       <style>{`
@@ -139,19 +151,28 @@ function PasswordModal({ onSuccess, onCancel }) {
   );
 }
 
-function EditBanner({ editMode, onToggle }) {
+function EditBanner({ editMode, onToggle, saveStatus }) {
   return (
     <div className="edit-banner">
       {editMode && (
         <div className="edit-mode-badge">✎ Edit Mode Active</div>
       )}
-      <button className={`edit-toggle ${editMode ? 'active' : ''}`} onClick={onToggle}>
+      {saveStatus === 'saving' && (
+        <div className="edit-mode-badge" style={{ background: 'rgba(52,152,219,0.15)', borderColor: 'rgba(52,152,219,0.4)', color: '#3498db' }}>⏳ Saving...</div>
+      )}
+      {saveStatus === 'saved' && (
+        <div className="edit-mode-badge" style={{ background: 'rgba(46,204,113,0.15)', borderColor: 'rgba(46,204,113,0.4)', color: '#2ecc71' }}>✓ Saved!</div>
+      )}
+      {saveStatus === 'error' && (
+        <div className="edit-mode-badge" style={{ background: 'rgba(231,76,60,0.15)', borderColor: 'rgba(231,76,60,0.4)', color: '#e74c3c' }}>✗ Save failed — check password</div>
+      )}
+      <button className={`edit-toggle ${editMode ? 'active' : ''}`} onClick={onToggle} disabled={saveStatus === 'saving'}>
         {editMode ? (
           <>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <polyline points="20 6 9 17 4 12"/>
             </svg>
-            Done Editing
+            Save & Done
           </>
         ) : (
           <>
@@ -176,16 +197,35 @@ function Footer({ name }) {
 }
 
 export default function App() {
-  const { editMode, toggleEditMode, data, updateField, updateNestedArray, addItem, removeItem } = useEditMode(portfolioData);
+  const { editMode, toggleEditMode, data, updateField, updateNestedArray, addItem, removeItem, loading, saveStatus, saveData, verifyPassword } = useEditMode(portfolioData);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [editPassword, setEditPassword] = useState('');
 
   useEffect(() => {
     ScrollTrigger.refresh();
   }, []);
 
-  const handleEditToggle = () => {
+  // Restore password from session if returning
+  useEffect(() => {
+    const storedPw = sessionStorage.getItem('portfolio_edit_pw');
+    if (storedPw) setEditPassword(storedPw);
+  }, []);
+
+  const handleEditToggle = async () => {
     if (editMode) {
-      toggleEditMode();
+      // Save data to API when exiting edit mode
+      const pw = editPassword || sessionStorage.getItem('portfolio_edit_pw') || '';
+      const success = await saveData(pw);
+      if (success) {
+        toggleEditMode();
+      } else {
+        // Clear password and auth if save failed so they are prompted again
+        sessionStorage.removeItem('portfolio_edit_auth');
+        sessionStorage.removeItem('portfolio_edit_pw');
+        setEditPassword('');
+        // Show the password modal again so they can enter the correct password and try saving
+        setShowPasswordModal(true);
+      }
       return;
     }
     if (sessionStorage.getItem('portfolio_edit_auth') === '1') {
@@ -195,7 +235,8 @@ export default function App() {
     }
   };
 
-  const handlePasswordSuccess = () => {
+  const handlePasswordSuccess = (password) => {
+    setEditPassword(password);
     setShowPasswordModal(false);
     toggleEditMode();
   };
@@ -203,6 +244,27 @@ export default function App() {
   const handleUpdateNested = (arrayPath, index, field, value) => {
     updateNestedArray(arrayPath, index, field, value);
   };
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--bg1)', color: 'var(--text)',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: '40px', height: '40px', border: '3px solid var(--border)',
+            borderTop: '3px solid var(--orange)', borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite', margin: '0 auto 16px',
+          }} />
+          <div style={{ fontFamily: 'Roboto Flex, sans-serif', fontSize: '14px', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            Loading Portfolio...
+          </div>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -269,9 +331,10 @@ export default function App() {
         <Contact personal={data.personal} editMode={editMode} onUpdate={updateField} />
       </main>
       <Footer name={data.personal.name} />
-      <EditBanner editMode={editMode} onToggle={handleEditToggle} />
+      <EditBanner editMode={editMode} onToggle={handleEditToggle} saveStatus={saveStatus} />
       {showPasswordModal && (
         <PasswordModal
+          onVerify={verifyPassword}
           onSuccess={handlePasswordSuccess}
           onCancel={() => setShowPasswordModal(false)}
         />

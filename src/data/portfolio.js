@@ -1,3 +1,10 @@
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  📝 CUSTOMIZE THIS FILE WITH YOUR OWN DATA                   ║
+// ║  Replace all the values below with your personal info,       ║
+// ║  experience, projects, skills, etc.                          ║
+// ║  Once deployed, you can also edit via the Edit Mode button.  ║
+// ╚════════════════════════════════════════════════════════════════╝
+
 export const portfolioData = {
   personal: {
     name: "Ojas Vipin Sapate",
